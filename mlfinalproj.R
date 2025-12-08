@@ -6,7 +6,7 @@
 # We only explore, clean, and define recipes for later use.
 
 # Load Libraries
-packages <- c("tidyverse", "caret", "recipes", "janitor", "pROC", "themis")
+packages <- c("tidyverse", "caret", "recipes", "janitor", "pROC", "themis") # caret for cross validation, recipes for pipelines, janitor for cleaning, pROC for metrics, and themis for 
 to_install <- packages[!packages %in% installed.packages()[, "Package"]]
 if (length(to_install)) install.packages(to_install, repos = "https://cloud.r-project.org")
 
