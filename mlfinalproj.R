@@ -215,5 +215,103 @@ cm_final <- confusionMatrix(final_preds, pred_df$obs)
 cm_final
 
 # END OF SVM CODE =============================================================
+# DECISION TREE & RANDOM FOREST
+# 2. Target + Categorical Predictors
+data_raw$churn <- ifelse(data_raw$churn == 1, "Yes",
+                         ifelse(data_raw$churn == 0, "No", NA))
 
+data_raw$churn <- factor(data_raw$churn, levels = c("No", "Yes"))
+
+
+# Identify categorical columns
+cat_cols <- c("country", "gender", "credit_card", "active_member")
+data_raw[cat_cols] <- lapply(data_raw[cat_cols], factor)
+
+
+# 3. Train/Test Split + Drop ID Columns
+set.seed(123)
+
+idx <- caret::createDataPartition(data_raw$churn, p = 0.7, list = FALSE)
+train_data <- data_raw[idx, ]
+test_data  <- data_raw[-idx, ]
+
+# Drop ID / high-cardinality identifier columns if present
+id_cols <- c("RowNumber", "CustomerId", "Surname",
+             "row_number", "customer_id", "surname", "ID", "Name")
+id_cols <- intersect(id_cols, names(train_data))
+
+if (length(id_cols) > 0) {
+  train_data <- train_data[, !(names(train_data) %in% id_cols)]
+  test_data  <- test_data[,  !(names(test_data)  %in% id_cols)]
+}
+
+train_data$churn <- droplevels(train_data$churn)
+test_data$churn  <- droplevels(test_data$churn)
+
+
+# 4. Recipe: Dummy Encode + SMOTE
+#   - step_dummy: make factors numeric (0/1)
+#   - step_smote: oversample minority churn class (Yes)
+rec_tree <- recipe(churn ~ ., data = train_data) %>%
+  step_dummy(all_nominal_predictors(), -all_outcomes()) %>%
+  step_smote(churn)   # SMOTE only on training set (skip=TRUE for bake)
+
+prep_tree <- prep(rec_tree, training = train_data)
+
+# SMOTE-balance + dummy-encode training data
+train_balanced <- bake(prep_tree, new_data = NULL)
+
+# Apply same encoding (no SMOTE) to test data
+test_processed <- bake(prep_tree, new_data = test_data)
+
+# Sanity check class balance after SMOTE
+table(train_data$churn)
+table(train_balanced$churn)
+
+
+# 5. Decision Tree on SMOTE Data
+tree_fit <- rpart(
+  churn ~ .,
+  data   = train_balanced,
+  method = "class",
+  control = rpart.control(cp = 0.01)
+)
+
+# Plot tree 
+rpart.plot(tree_fit, cex = 0.7)
+
+# Predictions on processed test set
+tree_pred_class <- predict(tree_fit, newdata = test_processed, type = "class")
+
+cm_tree <- confusionMatrix(tree_pred_class, test_processed$churn)
+cm_tree
+
+# Variable importance
+tree_varimp <- varImp(tree_fit)
+tree_varimp
+
+
+# 6. Random Forest on SMOTE Data
+set.seed(123)
+
+rf_fit <- randomForest(
+  churn ~ .,
+  data      = train_balanced,
+  ntree     = 500,
+  mtry      = floor(sqrt(ncol(train_balanced) - 1)),
+  importance = TRUE
+)
+
+rf_fit   # shows OOB error + OOB confusion matrix
+
+# Predictions on processed test set
+rf_pred_class <- predict(rf_fit, newdata = test_processed, type = "class")
+
+cm_rf <- confusionMatrix(rf_pred_class, test_processed$churn)
+cm_rf
+
+# Variable importance (random forest)
+importance(rf_fit)
+varImpPlot(rf_fit)
+# END OF DECISION TREE & RANDOM FOREST ===============================
 
