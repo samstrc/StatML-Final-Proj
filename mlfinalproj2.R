@@ -261,22 +261,25 @@ legend(
 
 # Helper function to compute all metrics for a prediction tibble
 compute_metrics <- function(pred_df) {
-  
   pred_df <- pred_df %>%
     mutate(
-      resp = factor(resp, levels = c("No", "Yes")),
-      .pred_class = factor(.pred_class, levels = c("No", "Yes"))
+      resp        = factor(resp, levels = c("Yes", "No")),
+      .pred_class = factor(.pred_class, levels = c("Yes", "No"))
     )
-  
+
   acc  <- accuracy(pred_df, truth = resp, estimate = .pred_class)$.estimate
-  prec <- precision(pred_df, truth = resp, estimate = .pred_class)$.estimate
-  rec  <- recall(pred_df, truth = resp, estimate = .pred_class)$.estimate
-  spec <- specificity(pred_df, truth = resp, estimate = .pred_class)$.estimate
-  f1   <- f_meas(pred_df, truth = resp, estimate = .pred_class)$.estimate
-  
-  # AUC must be computed using the probability column directly
-  auc  <- roc_auc(pred_df, truth = resp, .pred_Yes)$.estimate
-  
+  prec <- precision(pred_df, truth = resp, estimate = .pred_class, event_level = "first")$.estimate
+  rec  <- recall(pred_df, truth = resp, estimate = .pred_class, event_level = "first")$.estimate
+  spec <- specificity(pred_df, truth = resp, estimate = .pred_class, event_level = "first")$.estimate
+  f1   <- f_meas(pred_df, truth = resp, estimate = .pred_class, event_level = "first")$.estimate
+
+  auc  <- roc_auc(
+    pred_df,
+    truth      = resp,
+    .pred_Yes,
+    event_level = "first"   # "Yes" is the first level now
+  )$.estimate
+
   tibble(
     Accuracy    = acc,
     Precision   = prec,
@@ -286,8 +289,6 @@ compute_metrics <- function(pred_df) {
     AUC         = auc
   )
 }
-
-
 
 
 # Compute metrics for each model
