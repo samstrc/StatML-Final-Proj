@@ -1,5 +1,4 @@
-# MACHINE LEARNING FINAL PROJECT: Customer Churn Data
-# Ava, Sam, Jordan, Taylor
+
 
 # EDA + PREPROCESSING ONLY===============================================================================
 # NOTE: No CreateCV() here. No modeling yet.
@@ -101,9 +100,10 @@ rec_svm <- recipe(resp ~ ., data = df) %>%
   step_scale(all_numeric_predictors()) %>% # Scale variables
   step_smote(resp) # Oversample minority class
 
-# Decision tree recipe
+# Decision tree/RF recipe
 rec_tree <- recipe(resp ~ ., data = df) %>%
-  step_smote(resp)                                   # Oversample minority class
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
+  step_smote(resp) # Oversample minority class
 
 
 # Set up cross validation without reversing types...tried CreateCV, but it changed data types and overcomplicated the process
@@ -215,103 +215,219 @@ cm_final <- confusionMatrix(final_preds, pred_df$obs)
 cm_final
 
 # END OF SVM CODE =============================================================
-# DECISION TREE & RANDOM FOREST
-# 2. Target + Categorical Predictors
-data_raw$churn <- ifelse(data_raw$churn == 1, "Yes",
-                         ifelse(data_raw$churn == 0, "No", NA))
-
-data_raw$churn <- factor(data_raw$churn, levels = c("No", "Yes"))
-
-
-# Identify categorical columns
-cat_cols <- c("country", "gender", "credit_card", "active_member")
-data_raw[cat_cols] <- lapply(data_raw[cat_cols], factor)
-
-
-# 3. Train/Test Split + Drop ID Columns
+# RANDOM FOREST ===========================================================
 set.seed(123)
 
-idx <- caret::createDataPartition(data_raw$churn, p = 0.7, list = FALSE)
-train_data <- data_raw[idx, ]
-test_data  <- data_raw[-idx, ]
+rf_model <- train(
+  x = rec_tree,
+  data = df,
+  method = "rf",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneLength = 10
+)
 
-# Drop ID / high-cardinality identifier columns if present
-id_cols <- c("RowNumber", "CustomerId", "Surname",
-             "row_number", "customer_id", "surname", "ID", "Name")
-id_cols <- intersect(id_cols, names(train_data))
 
-if (length(id_cols) > 0) {
-  train_data <- train_data[, !(names(train_data) %in% id_cols)]
-  test_data  <- test_data[,  !(names(test_data)  %in% id_cols)]
+rf_model
+plot(rf_model)
+varImp(rf_model)
+
+# Extract predictions from best tuning mtry
+
+best_mtry <- rf_model$bestTune$mtry
+
+rf_pred_df <- rf_model$pred %>%
+  filter(mtry == best_mtry) %>%
+  mutate(obs = factor(obs, levels = c("No", "Yes")))
+
+# Random Forest ROC Curve
+
+rf_roc <- roc(
+  response = rf_pred_df$obs,
+  predictor = rf_pred_df$Yes
+)
+
+plot(
+  rf_roc,
+  col = "#33AA55",
+  lwd = 3,
+  main = sprintf("Random Forest ROC Curve (AUC = %.3f)", auc(rf_roc))
+)
+abline(a = 0, b = 1, lty = 2, col = "gray50")
+
+# Threshold tuning: compute Accuracy, Sens, Spec, F1
+
+thresholds <- seq(0.01, 0.99, 0.01)
+
+rf_metric_table <- data.frame(
+  threshold = thresholds,
+  Accuracy = NA,
+  Sensitivity = NA,
+  Specificity = NA,
+  F1 = NA
+)
+
+for (i in seq_along(thresholds)) {
+  
+  t <- thresholds[i]
+  
+  preds_t <- factor(
+    ifelse(rf_pred_df$Yes >= t, "Yes", "No"),
+    levels = c("No", "Yes")
+  )
+  
+  cm <- confusionMatrix(preds_t, rf_pred_df$obs)
+  
+  rf_metric_table$Accuracy[i]    <- cm$overall["Accuracy"]
+  rf_metric_table$Sensitivity[i] <- cm$byClass["Sensitivity"]
+  rf_metric_table$Specificity[i] <- cm$byClass["Specificity"]
+  rf_metric_table$F1[i]          <- cm$byClass["F1"]
 }
 
-train_data$churn <- droplevels(train_data$churn)
-test_data$churn  <- droplevels(test_data$churn)
+# Identify the best threshold (max F1)
 
+rf_best_idx <- which.max(rf_metric_table$F1)
+rf_best_threshold <- rf_metric_table$threshold[rf_best_idx]
+rf_best_stats <- rf_metric_table[rf_best_idx, ]
 
-# 4. Recipe: Dummy Encode + SMOTE
-#   - step_dummy: make factors numeric (0/1)
-#   - step_smote: oversample minority churn class (Yes)
-rec_tree <- recipe(churn ~ ., data = train_data) %>%
-  step_dummy(all_nominal_predictors(), -all_outcomes()) %>%
-  step_smote(churn)   # SMOTE only on training set (skip=TRUE for bake)
+cat("\nRF BEST THRESHOLD =", rf_best_threshold, "\n")
+print(rf_best_stats)
 
-prep_tree <- prep(rec_tree, training = train_data)
+# F1 vs Threshold plot
 
-# SMOTE-balance + dummy-encode training data
-train_balanced <- bake(prep_tree, new_data = NULL)
+ggplot(rf_metric_table, aes(x = threshold, y = F1)) +
+  geom_line(color = "#33AA55", linewidth = 1.2) +
+  geom_vline(xintercept = rf_best_threshold, color = "red", linetype = "dashed") +
+  labs(
+    title = "Random Forest F1 Score Across Thresholds",
+    x = "Threshold",
+    y = "F1 Score"
+  ) +
+  theme_minimal()
 
-# Apply same encoding (no SMOTE) to test data
-test_processed <- bake(prep_tree, new_data = test_data)
+# Final confusion matrix using best threshold
 
-# Sanity check class balance after SMOTE
-table(train_data$churn)
-table(train_balanced$churn)
-
-
-# 5. Decision Tree on SMOTE Data
-tree_fit <- rpart(
-  churn ~ .,
-  data   = train_balanced,
-  method = "class",
-  control = rpart.control(cp = 0.01)
+rf_final_preds <- factor(
+  ifelse(rf_pred_df$Yes >= rf_best_threshold, "Yes", "No"),
+  levels = c("No", "Yes")
 )
 
-# Plot tree 
-rpart.plot(tree_fit, cex = 0.7)
+rf_cm_final <- confusionMatrix(rf_final_preds, rf_pred_df$obs)
+rf_cm_final
 
-# Predictions on processed test set
-tree_pred_class <- predict(tree_fit, newdata = test_processed, type = "class")
-
-cm_tree <- confusionMatrix(tree_pred_class, test_processed$churn)
-cm_tree
-
-# Variable importance
-tree_varimp <- varImp(tree_fit)
-tree_varimp
-
-
-# 6. Random Forest on SMOTE Data
-set.seed(123)
-
-rf_fit <- randomForest(
-  churn ~ .,
-  data      = train_balanced,
-  ntree     = 500,
-  mtry      = floor(sqrt(ncol(train_balanced) - 1)),
-  importance = TRUE
-)
-
-rf_fit   # shows OOB error + OOB confusion matrix
-
-# Predictions on processed test set
-rf_pred_class <- predict(rf_fit, newdata = test_processed, type = "class")
-
-cm_rf <- confusionMatrix(rf_pred_class, test_processed$churn)
-cm_rf
-
-# Variable importance (random forest)
-importance(rf_fit)
-varImpPlot(rf_fit)
 # END OF DECISION TREE & RANDOM FOREST ===============================
 
+# Taylor: Logistic Regression
+# ============================================================
+# LOGISTIC REGRESSION (Clean + caret + matching pipeline)
+# ============================================================
+
+# -----------------------------
+# 1. Fit logistic regression
+# -----------------------------
+
+lr_model <- train(
+  recipe = rec_svm,
+  data = df,
+  method = "glm",
+  family = binomial,
+  trControl = ctrl,
+  metric = "ROC"
+)
+
+lr_model
+best_lr <- lr_model$bestTune
+print(best_lr)
+
+# -----------------------------
+# 2. Extract CV predictions
+# -----------------------------
+
+lr_pred_df <- lr_model$pred %>%
+  mutate(obs = factor(obs, levels = c("No", "Yes")))
+
+# -----------------------------
+# 3. ROC Curve + AUC
+# -----------------------------
+
+lr_roc <- roc(
+  response = lr_pred_df$obs,
+  predictor = lr_pred_df$Yes
+)
+
+plot(
+  lr_roc,
+  col = "#AA3355",
+  lwd = 3,
+  main = sprintf("Logistic Regression ROC Curve (AUC = %.3f)", auc(lr_roc))
+)
+abline(a = 0, b = 1, col = "gray50", lty = 2)
+
+lr_auc <- auc(lr_roc)
+cat("LR AUC =", round(lr_auc, 3), "\n")
+
+# -----------------------------
+# 4. Threshold tuning (maximize F1)
+# -----------------------------
+
+thresholds <- seq(0.01, 0.99, 0.01)
+
+lr_model <- train(
+  rec_svm,     # <- NOTICE: no argument name, just the recipe object
+  data = df,
+  method = "glm",
+  family = binomial,
+  trControl = ctrl,
+  metric = "ROC"
+)
+
+
+for (i in seq_along(thresholds)) {
+  
+  t <- thresholds[i]
+  
+  preds_t <- factor(
+    ifelse(lr_pred_df$Yes >= t, "Yes", "No"),
+    levels = c("No", "Yes")
+  )
+  
+  cm <- confusionMatrix(preds_t, lr_pred_df$obs)
+  
+  lr_metric_table$Accuracy[i]    <- cm$overall["Accuracy"]
+  lr_metric_table$Sensitivity[i] <- cm$byClass["Sensitivity"]
+  lr_metric_table$Specificity[i] <- cm$byClass["Specificity"]
+  lr_metric_table$F1[i]          <- cm$byClass["F1"]
+}
+
+lr_best_idx <- which.max(lr_metric_table$F1)
+lr_best_threshold <- lr_metric_table$threshold[lr_best_idx]
+lr_best_stats <- lr_metric_table[lr_best_idx, ]
+
+cat("\nLR BEST THRESHOLD =", lr_best_threshold, "\n")
+print(lr_best_stats)
+
+# -----------------------------
+# 5. F1 vs Threshold Plot
+# -----------------------------
+
+ggplot(lr_metric_table, aes(x = threshold, y = F1)) +
+  geom_line(color = "#AA3355", linewidth = 1.2) +
+  geom_vline(xintercept = lr_best_threshold, color = "red", linetype = "dashed") +
+  labs(
+    title = "Logistic Regression F1 Score Across Thresholds",
+    x = "Threshold",
+    y = "F1 Score"
+  ) +
+  theme_minimal()
+
+# -----------------------------
+# 6. Final Confusion Matrix at Optimal Threshold
+# -----------------------------
+
+lr_final_preds <- factor(
+  ifelse(lr_pred_df$Yes >= lr_best_threshold, "Yes", "No"),
+  levels = c("No", "Yes")
+)
+
+lr_cm_final <- confusionMatrix(lr_final_preds, lr_pred_df$obs)
+lr_cm_final
