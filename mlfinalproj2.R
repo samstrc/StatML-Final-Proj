@@ -301,3 +301,22 @@ model_comparison <- bind_rows(lr_metrics, svm_metrics, rf_metrics) %>%
   select(Model, everything())
 
 print(model_comparison)
+
+# ============================================================
+# CONFUSION MATRICES — TEST SET
+# ============================================================
+
+# Logistic Regression
+lr_cm <- conf_mat(lr_pred, truth = resp, estimate = .pred_class)
+cat("\n--- Logistic Regression Confusion Matrix ---\n")
+print(lr_cm)
+
+# SVM (RBF)
+svm_cm <- conf_mat(svm_pred, truth = resp, estimate = .pred_class)
+cat("\n--- SVM (RBF) Confusion Matrix ---\n")
+print(svm_cm)
+
+# Random Forest
+rf_cm <- conf_mat(rf_pred, truth = resp, estimate = .pred_class)
+cat("\n--- Random Forest Confusion Matrix ---\n")
+print(rf_cm)
