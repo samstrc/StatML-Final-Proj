@@ -510,3 +510,35 @@ cat("\nRandom Forest:\n")
 cat("  # Trees: ", rf_raw$num.trees, "\n")
 cat("  mtry:    ", best_rf$mtry, "\n")
 cat("  min_n:   ", best_rf$min_n, "\n")
+
+
+# ====================================================================
+#  LOGISTIC REGRESSION COEFFICIENTS — TABLE + PLOT
+# ====================================================================
+
+# Extract fitted glm from the tidymodels workflow
+lr_fit_obj <- lr_final %>% extract_fit_parsnip()
+
+# Tidy coefficient table (log-odds)
+lr_coef <- broom::tidy(lr_fit_obj)
+
+cat("\n===== LOGISTIC REGRESSION COEFFICIENTS (log-odds) =====\n")
+print(lr_coef)
+
+# Coefficient plot as ODDS RATIOS 
+lr_coef_or <- lr_coef %>%
+  filter(term != "(Intercept)") %>%            # drop intercept for the plot
+  mutate(
+    odds_ratio = exp(estimate),                # convert log-odds to odds ratio
+    term       = reorder(term, odds_ratio)     # order predictors by effect size
+  )
+
+ggplot(lr_coef_or, aes(x = odds_ratio, y = term)) +
+  geom_point(color = "steelblue", size = 2.8) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray40") +
+  labs(
+    title = "Logistic Regression Effects on Churn (Odds Ratios)",
+    x     = "Odds Ratio (churn = Yes)",
+    y     = "Predictor"
+  ) +
+  theme_minimal(base_size = 13)
