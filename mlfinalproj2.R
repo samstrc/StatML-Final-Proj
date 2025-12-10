@@ -75,11 +75,6 @@ df %>%
 # -------------------------
 df %>% select(where(is.numeric)) %>% cor() %>% round(3)
 
-
-# -------------------------
-# EDA - 
-
-
 # -------------------------
 # Chi-square test of association (resp vs categorical predictors)
 # -------------------------
