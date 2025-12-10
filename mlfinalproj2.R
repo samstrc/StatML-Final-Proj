@@ -126,32 +126,32 @@ split <- initial_split(df, prop = 0.8, strata = resp)
 train_data <- training(split)
 test_data  <- testing(split)
 
-folds <- vfold_cv(train_data, v = 5, strata = resp)
+folds <- vfold_cv(train_data, v = 5, strata = resp) # Split 80% into 5 parts, train model on 4 and test on 1. Do this 5 times.
 
 # ====================================================================
 #  MODEL SPECIFICATIONS
 # ====================================================================
 
-# Logistic Regression (no tuning, just baseline wo regularization)
+# Logistic Regression (no tuning, just baseline w/o regularization)
 lr_spec <- logistic_reg() %>%
   set_engine("glm") %>%
   set_mode("classification")
 
 # SVM (RBF) tuned
 svm_spec <- svm_rbf(
-  cost = tune(),
-  rbf_sigma = tune()
+  cost = tune(), # Says we will tune this using cross validation we defined earlier
+  rbf_sigma = tune() # Radial basis function since it handles nonlinear data better, esp when we aren't sure which to use off of the bat
 ) %>%
-  set_engine("kernlab") %>%
+  set_engine("kernlab") %>% # Engine option, could be a few options depending on what package you want to use. e1071 could be used, but it is older. 
   set_mode("classification")
 
 # Random Forest tuned
 rf_spec <- rand_forest(
-  mtry = tune(),
+  mtry = tune(), # Tune rf hyperparameters
   min_n = tune(),
-  trees = 500
+  trees = 500 # Can tune, but not needed usually
 ) %>%
-  set_engine("ranger", importance = "impurity") %>%
+  set_engine("ranger", importance = "impurity") %>% # use newer ranger package with impurity-based importance 
   set_mode("classification")
 
 # ====================================================================
@@ -162,16 +162,15 @@ svm_wf <- workflow() %>% add_model(svm_spec) %>% add_recipe(rec)
 rf_wf  <- workflow() %>% add_model(rf_spec)  %>% add_recipe(rec)
 
 # ====================================================================
-#  HYPERPARAMETER GRIDS (tests parameters for optimal performance)
+#  HYPERPARAMETER GRIDS (tests parameters for optimal performance, but only on the tune() selected hyperparameters)
 # ====================================================================
-
 # Prep once so we know number of predictors
 rec_prep <- prep(rec)
 p <- length(bake(rec_prep, new_data = train_data)) - 1  # number predictors minus outcome
 
 # SVM grid
 grid_svm <- grid_regular(
-  cost(range = c(-3, 3)),        # log2 scale, narrower than [-5, 5]
+  cost(range = c(-3, 3)),        # narrower than [-5, 5], -5 to 5 took too long
   rbf_sigma(range = c(-3, 3)),
   levels = 4                     # 4 values per dimension (16 total)
 )
@@ -184,11 +183,11 @@ rf_params <- parameters(
 
 grid_rf <- grid_random(
   rf_params,
-  size = 10   # 10 random combos instead of 25
+  size = 10   # 10 random combos instead of 25..took far too long :(
 )
 
 # ====================================================================
-#  TUNING
+#  TUNING: Fit models multiple times with different settings, pick the best later
 # ====================================================================
 
 # Logistic regression (NO TUNING - BASELINE MODEL)
@@ -222,14 +221,14 @@ rf_tuned <- rf_wf %>%
 # ====================================================================
 
 # Select best hyperparameters
-best_svm <- svm_tuned %>% select_best(metric = "roc_auc")
-best_rf  <- rf_tuned  %>% select_best(metric = "roc_auc")
+best_svm <- svm_tuned %>% select_best(metric = "roc_auc") # Picked on roc_auc curve area
+best_rf  <- rf_tuned  %>% select_best(metric = "roc_auc") # Picked on roc_auc curve area
 
 # Finalize workflows using best params
 svm_final_wf <- svm_wf %>% finalize_workflow(best_svm)
 rf_final_wf  <- rf_wf  %>% finalize_workflow(best_rf)
 
-# Fit models on full training data
+# Fit models on alllll training data
 svm_final <- svm_final_wf %>% fit(data = train_data)
 rf_final  <- rf_final_wf  %>% fit(data = train_data)
 
