@@ -2,11 +2,16 @@
 # Ava, Sam, Jordan, Taylor
 
 # -------------------------
-# LOAD LIBRARIES
+# LOAD LIBRARIES 
 # -------------------------
+# tidyverse for reading in data, cleaning, and plots/tables
+# tideymodels for modeling & preprocessing pipelines, metrics, the meat and potatos if you will.
+# janitor for cleaning our data
+# themis for smote oversampling
+# ranger for RF engine. Faster than the classic randomForest package.
 packages <- c(
-  "tidyverse", "tidymodels", "janitor", "pROC",
-  "themis", "vip", "ranger"
+  "tidyverse", "tidymodels", "janitor",
+  "themis", "ranger"
 )
 
 to_install <- packages[!packages %in% installed.packages()[,1]]
