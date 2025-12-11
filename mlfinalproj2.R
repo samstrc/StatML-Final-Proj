@@ -1,4 +1,4 @@
-# MACHINE LEARNING FINAL PROJECT: Customer Churn Data
+# MACHINE LEARNING FINAL PROJECT: Customer Churn Data 
 # Ava, Sam, Jordan, Taylor
 
 # -------------------------
@@ -20,9 +20,13 @@ tidymodels_prefer()
 # -------------------------
 data <- read_csv(
   "https://raw.githubusercontent.com/samstrc/StatML-Final-Proj/refs/heads/main/customer_churn.csv",
-  show_col_types = FALSE
-) %>% clean_names()
+  show_col_types = FALSE # Hides output, not needed
+) %>% clean_names() # From janitor, converts all column names into a consistent, R-friendly format
 
+
+# The code below cleans the dataset by removing customer_id and creating a new response variable, resp, from the churn column. 
+# It relabels the values as “No” and “Yes,” and reorders them so that “Yes” is treated as the positive class. It then 
+# converts key categorical variables into factors so the models will handle them correctly. Finally, it removes the original churn column and moves resp to the front.
 df <- data %>%
   select(-customer_id) %>%
   mutate(
@@ -35,12 +39,12 @@ df <- data %>%
 # -------------------------
 # BASIC CHECKS
 # -------------------------
-print(table(df$resp))
-print(prop.table(table(df$resp)))
-print(colSums(is.na(df)))
+print(table(df$resp)) # Table to quickly check class imbalance
+print(prop.table(table(df$resp))) # Class imbalance as a percent 
+print(colSums(is.na(df))) # Check for missing values by col
 
 # -------------------------
-# EDA - CLASS IMBALANCE!!!!!
+# EDA - CLASS IMBALANCE!!!!! :( This is just a nice visual to present, rather than the table. 
 # -------------------------
 ggplot(df, aes(x = resp)) +
   geom_bar(aes(y = after_stat(count/sum(count))), fill = "steelblue") +
@@ -59,7 +63,7 @@ df %>%
   theme_minimal()
 
 # -------------------------
-# EDA - CATEGORICAL
+# EDA - CATEGORICAL BAR PLOTS
 # -------------------------
 df %>%
   select(country, gender, credit_card, active_member, resp) %>%
@@ -71,7 +75,7 @@ df %>%
   theme_minimal()
 
 # -------------------------
-# EDA - CORRELATION MATRIX...look for colinearity 
+# EDA - CORRELATION MATRIX...look for colinearity. This could impact linear models.
 # -------------------------
 df %>% select(where(is.numeric)) %>% cor() %>% round(3)
 
@@ -81,12 +85,12 @@ df %>% select(where(is.numeric)) %>% cor() %>% round(3)
 
 # Pick only categorical predictors (exclude resp itself)
 cat_vars <- df %>%
-  select(where(is.factor)) %>%   # all factors
-  select(-resp)                  # drop response
+  select(where(is.factor)) %>%   # All factors
+  select(-resp)                  # Drop response
 
 # Run chi-square test for each categorical variable vs resp
 chi_results <- purrr::map_df(names(cat_vars), \(v) {
-  tbl  <- table(df[[v]], df$resp)   # contingency table
+  tbl  <- table(df[[v]], df$resp)   # Contingency table
   test <- stats::chisq.test(tbl)
 
   tibble(
@@ -110,19 +114,23 @@ barplot(
 )
 abline(h = 0.05, col = "red", lty = 2)
 
+
+
+# SMOTE is an oversampling technique used to address the class imbalance during training
+# Recipes are a part of the tidymodels pipeline. We are using it for consistency & the minimal code required. 
 # ====================================================================
 #  PREPROCESSING RECIPE (WITH SMOTE)
 # ====================================================================
 rec <- recipe(resp ~ ., data = df) %>%
-  step_dummy(all_nominal_predictors()) %>%      # convert factors
-  step_normalize(all_numeric_predictors()) %>%  # scale numeric
-  step_smote(resp)                              # balance classes (only applied to training)
+  step_dummy(all_nominal_predictors()) %>%      # Convert factors to dummies (encoding)
+  step_normalize(all_numeric_predictors()) %>%  # Scale numeric data & center at mean
+  step_smote(resp)                              # Oversample minority class
 
 # -------------------------
-# DATA SPLIT & CV
+# DATA SPLIT & CV (tidymodels function)
 # -------------------------
-set.seed(123)
-split <- initial_split(df, prop = 0.8, strata = resp)
+set.seed(123) # So we can reproduce
+split <- initial_split(df, prop = 0.8, strata = resp) # Split 80/20 for training and test. We want stratified folds to keep efficient numbers of the resp var. 
 train_data <- training(split)
 test_data  <- testing(split)
 
@@ -131,7 +139,7 @@ folds <- vfold_cv(train_data, v = 5, strata = resp) # Split 80% into 5 parts, tr
 # ====================================================================
 #  MODEL SPECIFICATIONS
 # ====================================================================
-
+# All models are set to classification mode since we are doing binary classification. 
 # Logistic Regression (no tuning, just baseline w/o regularization)
 lr_spec <- logistic_reg() %>%
   set_engine("glm") %>%
@@ -151,7 +159,7 @@ rf_spec <- rand_forest(
   min_n = tune(),
   trees = 500 # Can tune, but not needed usually
 ) %>%
-  set_engine("ranger", importance = "impurity") %>% # use newer ranger package with impurity-based importance 
+  set_engine("ranger", importance = "impurity") %>% # Use newer ranger package with impurity-based importance, this is a choice though.
   set_mode("classification")
 
 # ====================================================================
@@ -170,7 +178,7 @@ p <- length(bake(rec_prep, new_data = train_data)) - 1  # number predictors minu
 
 # SVM grid
 grid_svm <- grid_regular(
-  cost(range = c(-3, 3)),        # narrower than [-5, 5], -5 to 5 took too long
+  cost(range = c(-3, 3)),        # Narrower than [-5, 5], -5 to 5 took too long. Given more computing power, we would test a larger range. 
   rbf_sigma(range = c(-3, 3)),
   levels = 4                     # 4 values per dimension (16 total)
 )
@@ -181,20 +189,20 @@ rf_params <- parameters(
   min_n()
 )
 
-grid_rf <- grid_random(
+grid_rf <- grid_random( # Notice we did random this time...regular took far too long
   rf_params,
-  size = 10   # 10 random combos instead of 25..took far too long :(
+  size = 10   # 10 random combos..took too long to do more :(
 )
 
 # ====================================================================
-#  TUNING: Fit models multiple times with different settings, pick the best later
-# ====================================================================
+#  TUNING: Fit models multiple times with different settings, pick the best later.
+# ==================================================================== 
 
 # Logistic regression (NO TUNING - BASELINE MODEL)
 lr_fit <- lr_wf %>%
   fit_resamples(
     folds,
-    metrics = metric_set(roc_auc, accuracy, f_meas),
+    metrics = metric_set(roc_auc, accuracy, f_meas), # f_meas (with default beta = 1) is the F1 score: the harmonic mean of precision and recall.
     control = control_resamples(save_pred = TRUE)
   )
 
@@ -228,16 +236,19 @@ best_rf  <- rf_tuned  %>% select_best(metric = "roc_auc") # Picked on roc_auc cu
 svm_final_wf <- svm_wf %>% finalize_workflow(best_svm)
 rf_final_wf  <- rf_wf  %>% finalize_workflow(best_rf)
 
-# Fit models on alllll training data
+
+# Fit models on alllll training data :)
+# All fits are done on the full 80% split this time. Used the workflows for convinience.
 svm_final <- svm_final_wf %>% fit(data = train_data)
 rf_final  <- rf_final_wf  %>% fit(data = train_data)
 
-# Logistic Regression had no tuning, so just fit
+# Logistic Regression had no tuning, so just fit as it is
 lr_final  <- lr_wf %>% fit(data = train_data)
 
 # ====================================================================
 #  TEST SET PREDICTIONS
 # ====================================================================
+# This is where we make predictions on unseen observations and save the results to compute metrics. 
 
 # LOGISTIC REGRESSION PREDICTIONS
 lr_pred <- predict(lr_final, test_data, type = "prob") %>%
@@ -254,7 +265,7 @@ rf_pred <- predict(rf_final, test_data, type = "prob") %>%
   bind_cols(predict(rf_final, test_data, type = "class")) %>%
   bind_cols(test_data %>% select(resp))
 
-# Colors for all ROC plots
+# Colors for all ROC plots, we chose some cute ones lol
 model_colors <- c(
   "Logistic Regression" = "steelblue",
   "SVM (RBF)"            = "firebrick2",
@@ -334,12 +345,12 @@ compute_metrics <- function(pred_df) {
   )
 }
 
-# Compute metrics for each model
+# Compute metrics for each model and save
 lr_metrics_test  <- compute_metrics(lr_pred)  %>% mutate(Model = "Logistic Regression")
 svm_metrics_test <- compute_metrics(svm_pred) %>% mutate(Model = "SVM (RBF)")
 rf_metrics_test  <- compute_metrics(rf_pred)  %>% mutate(Model = "Random Forest")
 
-# Combine into one table
+# Combine into one table for nice viewing 
 model_comparison <- bind_rows(
   lr_metrics_test,
   svm_metrics_test,
@@ -524,12 +535,12 @@ lr_coef <- broom::tidy(lr_fit_obj)
 cat("\n===== LOGISTIC REGRESSION COEFFICIENTS (log-odds) =====\n")
 print(lr_coef)
 
-# Coefficient plot as ODDS RATIOS 
+# Coefficient plot as odds ratios
 lr_coef_or <- lr_coef %>%
-  filter(term != "(Intercept)") %>%            # drop intercept for the plot
+  filter(term != "(Intercept)") %>%            # Drop intercept for the plot
   mutate(
-    odds_ratio = exp(estimate),                # convert log-odds to odds ratio
-    term       = reorder(term, odds_ratio)     # order predictors by effect size
+    odds_ratio = exp(estimate),                # Convert log-odds to odds ratio
+    term       = reorder(term, odds_ratio)     # Order predictors by effect size
   )
 
 ggplot(lr_coef_or, aes(x = odds_ratio, y = term)) +
@@ -541,3 +552,6 @@ ggplot(lr_coef_or, aes(x = odds_ratio, y = term)) +
     y     = "Predictor"
   ) +
   theme_minimal(base_size = 13)
+
+
+# And we are done! :)
